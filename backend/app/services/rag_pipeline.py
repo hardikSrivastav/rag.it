@@ -26,7 +26,7 @@ class RAGPipeline:
         self.llm_manager = llm_manager
     
     async def ingest_file(self, file_path: str, source_tool: str = "manual_upload", 
-                         metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+                         metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Ingest a file into the RAG system"""
         db = next(get_db())
         
@@ -249,8 +249,8 @@ class RAGPipeline:
             
             raise
     
-    async def query(self, query: str, top_k: int = 5) -> str:
-        """Query the RAG system and get a response"""
+    async def query(self, query: str, top_k: int = 5) -> Dict[str, Any]:
+        """Query the RAG system and get a response with sources"""
         try:
             # Generate query embedding
             query_embedding = self.embedding_manager.embed_text(query)
@@ -261,12 +261,19 @@ class RAGPipeline:
             # Generate response
             response = await self.llm_manager.generate_response(query, search_results)
             
+            # Extract source information
+            sources = self._extract_sources(search_results)
+            
             logger.info("Query processed successfully", 
                        query_length=len(query),
                        retrieved_chunks=len(search_results),
-                       response_length=len(response))
+                       response_length=len(response),
+                       sources_count=len(sources))
             
-            return response
+            return {
+                "response": response,
+                "sources": sources
+            }
             
         except Exception as e:
             logger.error("Failed to process query", query=query, error=str(e))
@@ -281,17 +288,46 @@ class RAGPipeline:
             # Search for relevant chunks
             search_results = self.vector_store.search_vectors(query_embedding, top_k)
             
+            # Store sources for later retrieval
+            self._last_query_sources = self._extract_sources(search_results)
+            
             # Generate streaming response
             async for chunk in self.llm_manager.generate_streaming_response(query, search_results):
                 yield chunk
             
             logger.info("Streaming query processed successfully", 
                        query_length=len(query),
-                       retrieved_chunks=len(search_results))
+                       retrieved_chunks=len(search_results),
+                       sources_count=len(self._last_query_sources))
             
         except Exception as e:
             logger.error("Failed to process streaming query", query=query, error=str(e))
             raise
+    
+    def _extract_sources(self, search_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Extract source information from search results"""
+        sources = []
+        seen_documents = set()
+        
+        for result in search_results:
+            metadata = result.get("metadata", {}) or {}
+            document_id = metadata.get("document_id")
+            
+            if document_id and document_id not in seen_documents:
+                seen_documents.add(document_id)
+                sources.append({
+                    "document_id": document_id,
+                    "filename": metadata.get("source", "Unknown"),
+                    "source_tool": metadata.get("source_tool", "unknown"),
+                    "chunk_index": metadata.get("chunk_index", 0),
+                    "relevance_score": result.get("score", 0.0)
+                })
+        
+        return sources
+    
+    def get_last_query_sources(self) -> List[Dict[str, Any]]:
+        """Get sources from the last streaming query"""
+        return getattr(self, '_last_query_sources', [])
     
     def _get_content_type(self, file_path: str) -> str:
         """Get content type based on file extension"""

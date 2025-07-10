@@ -26,17 +26,17 @@ async def chat_query(request: ChatRequest):
                    session_id=request.session_id)
         
         # Process query using RAG pipeline
-        response = await rag_pipeline.query(
+        result = await rag_pipeline.query(
             query=request.query,
             top_k=request.top_k
         )
         
         return ChatResponse(
             success=True,
-            response=response,
+            response=result["response"],
             query=request.query,
             session_id=request.session_id,
-            sources=[]  # TODO: Add source information
+            sources=result["sources"]
         )
         
     except HTTPException:
@@ -86,7 +86,8 @@ async def chat_stream(request: ChatRequest):
                 # Send completion signal
                 completion = {
                     "type": "completion",
-                    "status": "completed"
+                    "status": "completed",
+                    "sources": rag_pipeline.get_last_query_sources()
                 }
                 yield f"data: {json.dumps(completion)}\n\n"
                 

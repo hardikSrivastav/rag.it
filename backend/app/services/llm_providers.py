@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional, Iterator, AsyncIterator
+from typing import List, Dict, Any, Optional, Iterator, AsyncIterator, Union
 from abc import ABC, abstractmethod
 import asyncio
 import json
@@ -16,12 +16,12 @@ class BaseLLMProvider(ABC):
     """Base class for LLM providers"""
     
     @abstractmethod
-    async def generate_response(self, prompt: str, context: List[Dict[str, Any]] = None) -> str:
+    async def generate_response(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> str:
         """Generate a response from the LLM"""
         pass
     
     @abstractmethod
-    async def generate_streaming_response(self, prompt: str, context: List[Dict[str, Any]] = None) -> AsyncIterator[str]:
+    async def generate_streaming_response(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> AsyncIterator[str]:
         """Generate a streaming response from the LLM"""
         pass
     
@@ -64,43 +64,55 @@ class AWSBedrockProvider(BaseLLMProvider):
             logger.error("Failed to initialize AWS Bedrock client", error=str(e))
             self.client = None
     
-    def _build_prompt(self, prompt: str, context: List[Dict[str, Any]] = None) -> str:
-        """Build the full prompt with context"""
-        if not context:
-            return prompt
+    def _build_messages(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+        """Build messages for Claude 3 models"""
+        messages = []
         
-        # Build context from retrieved documents
-        context_text = "\n\n".join([
-            f"Source: {doc.get('metadata', {}).get('source', 'Unknown')}\n{doc.get('text', '')}"
-            for doc in context
-        ])
+        # Add user message first (required by AWS Bedrock)
+        messages.append({
+            "role": "user",
+            "content": [{"type": "text", "text": prompt}]
+        })
         
-        full_prompt = f"""Based on the following context, please answer the question. If the answer is not in the context, please say so.
+        if context:
+            # Add assistant message with context
+            context_text = "\n\n".join([
+                f"Source: {doc.get('metadata', {}).get('source', 'Unknown')}\n{doc.get('text', '')}"
+                for doc in context
+            ])
+            
+            context_message = f"""You are a helpful assistant. Use the following context to answer questions. If the answer is not in the context, please say so.
 
 Context:
-{context_text}
-
-Question: {prompt}
-
-Answer:"""
+{context_text}"""
+            
+            messages.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": context_message}]
+            })
+            
+            # Add another user message to ask the actual question
+            messages.append({
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}]
+            })
         
-        return full_prompt
+        return messages
     
-    async def generate_response(self, prompt: str, context: List[Dict[str, Any]] = None) -> str:
+    async def generate_response(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> str:
         """Generate a response from AWS Bedrock"""
         if not self.client:
             raise Exception("AWS Bedrock client not available")
         
         try:
-            full_prompt = self._build_prompt(prompt, context)
+            messages = self._build_messages(prompt, context)
             
-            # Prepare request body (Claude format)
+            # Prepare request body (Claude 3 Messages format)
             body = {
-                "prompt": f"\n\nHuman: {full_prompt}\n\nAssistant:",
-                "max_tokens_to_sample": settings.MAX_TOKENS,
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": settings.MAX_TOKENS,
                 "temperature": settings.TEMPERATURE,
-                "top_p": 1,
-                "stop_sequences": ["\n\nHuman:"]
+                "messages": messages
             }
             
             # Make request
@@ -113,33 +125,38 @@ Answer:"""
             
             # Parse response
             response_body = json.loads(response.get('body').read())
-            completion = response_body.get('completion', '')
+            content = response_body.get('content', [])
+            
+            # Extract text from response content
+            response_text = ""
+            for block in content:
+                if block.get('type') == 'text':
+                    response_text += block.get('text', '')
             
             logger.info("Generated response with AWS Bedrock", 
-                       prompt_length=len(full_prompt),
-                       response_length=len(completion))
+                       prompt_length=len(prompt),
+                       response_length=len(response_text))
             
-            return completion.strip()
+            return response_text.strip()
             
         except Exception as e:
             logger.error("Failed to generate response with AWS Bedrock", error=str(e))
             raise
     
-    async def generate_streaming_response(self, prompt: str, context: List[Dict[str, Any]] = None) -> AsyncIterator[str]:
+    async def generate_streaming_response(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> AsyncIterator[str]:
         """Generate a streaming response from AWS Bedrock"""
         if not self.client:
             raise Exception("AWS Bedrock client not available")
         
         try:
-            full_prompt = self._build_prompt(prompt, context)
+            messages = self._build_messages(prompt, context)
             
-            # Prepare request body (Claude format)
+            # Prepare request body (Claude 3 Messages format)
             body = {
-                "prompt": f"\n\nHuman: {full_prompt}\n\nAssistant:",
-                "max_tokens_to_sample": settings.MAX_TOKENS,
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": settings.MAX_TOKENS,
                 "temperature": settings.TEMPERATURE,
-                "top_p": 1,
-                "stop_sequences": ["\n\nHuman:"]
+                "messages": messages
             }
             
             # Make streaming request
@@ -153,8 +170,10 @@ Answer:"""
             # Process streaming response
             for event in response.get('body'):
                 chunk = json.loads(event['chunk']['bytes'])
-                if 'completion' in chunk:
-                    yield chunk['completion']
+                if 'content' in chunk:
+                    for block in chunk['content']:
+                        if block.get('type') == 'text':
+                            yield block.get('text', '')
                     
         except Exception as e:
             logger.error("Failed to generate streaming response with AWS Bedrock", error=str(e))
@@ -167,10 +186,13 @@ Answer:"""
         
         try:
             # Test with a simple request
+            messages = [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
+            
             body = {
-                "prompt": "\n\nHuman: Hello\n\nAssistant:",
-                "max_tokens_to_sample": 10,
-                "temperature": 0.1
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 10,
+                "temperature": 0.1,
+                "messages": messages
             }
             
             response = self.client.invoke_model(
@@ -209,7 +231,7 @@ class OpenAIProvider(BaseLLMProvider):
             logger.error("Failed to initialize OpenAI client", error=str(e))
             self.client = None
     
-    def _build_messages(self, prompt: str, context: List[Dict[str, Any]] = None) -> List[Dict[str, str]]:
+    def _build_messages(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, str]]:
         """Build messages for OpenAI chat completion"""
         messages = []
         
@@ -232,7 +254,7 @@ Context:
         
         return messages
     
-    async def generate_response(self, prompt: str, context: List[Dict[str, Any]] = None) -> str:
+    async def generate_response(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> str:
         """Generate a response from OpenAI"""
         if not self.client:
             raise Exception("OpenAI client not available")
@@ -260,7 +282,7 @@ Context:
             logger.error("Failed to generate response with OpenAI", error=str(e))
             raise
     
-    async def generate_streaming_response(self, prompt: str, context: List[Dict[str, Any]] = None) -> AsyncIterator[str]:
+    async def generate_streaming_response(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> AsyncIterator[str]:
         """Generate a streaming response from OpenAI"""
         if not self.client:
             raise Exception("OpenAI client not available")
@@ -327,7 +349,7 @@ class LLMManager:
         logger.error("No LLM providers available")
         return None
     
-    async def generate_response(self, prompt: str, context: List[Dict[str, Any]] = None) -> str:
+    async def generate_response(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> str:
         """Generate a response using the first available provider"""
         provider = self._get_available_provider()
         if not provider:
@@ -335,7 +357,7 @@ class LLMManager:
         
         return await provider.generate_response(prompt, context)
     
-    async def generate_streaming_response(self, prompt: str, context: List[Dict[str, Any]] = None) -> AsyncIterator[str]:
+    async def generate_streaming_response(self, prompt: str, context: Optional[List[Dict[str, Any]]] = None) -> AsyncIterator[str]:
         """Generate a streaming response using the first available provider"""
         provider = self._get_available_provider()
         if not provider:
