@@ -1,13 +1,13 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
 import hashlib
 
-from langchain.text_splitter import (
+from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
     CharacterTextSplitter,
     TokenTextSplitter
 )
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -23,269 +23,234 @@ class BaseTextChunker(ABC):
         pass
     
     @abstractmethod
-    def chunk_text(self, text: str, metadata: Dict[str, Any] = None) -> List[Document]:
+    def chunk_text(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Chunk text into smaller pieces"""
         pass
 
-class RecursiveTextChunker(BaseTextChunker):
-    """Recursive character text chunker - best for most documents"""
+class RecursiveCharacterChunker(BaseTextChunker):
+    """Recursive character text chunker - good for most documents"""
     
-    def __init__(self, chunk_size: int = None, chunk_overlap: int = None):
-        self.chunk_size = chunk_size or settings.CHUNK_SIZE
-        self.chunk_overlap = chunk_overlap or settings.CHUNK_OVERLAP
-        
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
             length_function=len,
             separators=["\n\n", "\n", " ", ""]
         )
+        
+        logger.info("Initialized RecursiveCharacterChunker", 
+                   chunk_size=chunk_size, 
+                   chunk_overlap=chunk_overlap)
     
     def chunk_documents(self, documents: List[Document]) -> List[Document]:
-        """Chunk documents into smaller pieces"""
+        """Chunk documents using recursive character splitting"""
         try:
-            chunked_documents = []
+            chunks = self.text_splitter.split_documents(documents)
             
-            for doc in documents:
-                chunks = self.text_splitter.split_documents([doc])
-                
-                # Add chunk metadata
-                for i, chunk in enumerate(chunks):
-                    chunk.metadata.update({
-                        "chunk_index": i,
-                        "chunk_size": len(chunk.page_content),
-                        "chunk_hash": hashlib.sha256(chunk.page_content.encode()).hexdigest(),
-                        "chunker": "RecursiveTextChunker",
-                        "original_document": doc.metadata.get("source", "unknown")
-                    })
-                
-                chunked_documents.extend(chunks)
+            # Add chunk metadata
+            for i, chunk in enumerate(chunks):
+                chunk.metadata.update({
+                    "chunk_id": i,
+                    "chunker": "RecursiveCharacterChunker",
+                    "chunk_size": self.chunk_size,
+                    "chunk_overlap": self.chunk_overlap
+                })
             
             logger.info("Documents chunked successfully", 
-                       input_documents=len(documents),
-                       output_chunks=len(chunked_documents),
-                       chunker="RecursiveTextChunker")
-            
-            return chunked_documents
+                       original_docs=len(documents), 
+                       chunks=len(chunks))
+            return chunks
             
         except Exception as e:
             logger.error("Failed to chunk documents", error=str(e))
             raise
     
-    def chunk_text(self, text: str, metadata: Dict[str, Any] = None) -> List[Document]:
-        """Chunk text into smaller pieces"""
+    def chunk_text(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """Chunk text using recursive character splitting"""
         try:
-            metadata = metadata or {}
+            if metadata is None:
+                metadata = {}
             
             # Create document from text
             document = Document(page_content=text, metadata=metadata)
             
             # Chunk the document
-            chunks = self.text_splitter.split_documents([document])
-            
-            # Add chunk metadata
-            for i, chunk in enumerate(chunks):
-                chunk.metadata.update({
-                    "chunk_index": i,
-                    "chunk_size": len(chunk.page_content),
-                    "chunk_hash": hashlib.sha256(chunk.page_content.encode()).hexdigest(),
-                    "chunker": "RecursiveTextChunker"
-                })
+            chunks = self.chunk_documents([document])
             
             logger.info("Text chunked successfully", 
-                       input_length=len(text),
-                       output_chunks=len(chunks))
-            
+                       text_length=len(text), 
+                       chunks=len(chunks))
             return chunks
             
         except Exception as e:
             logger.error("Failed to chunk text", error=str(e))
             raise
 
-class CharacterTextChunker(BaseTextChunker):
-    """Character-based text chunker"""
+class CharacterChunker(BaseTextChunker):
+    """Simple character text chunker"""
     
-    def __init__(self, chunk_size: int = None, chunk_overlap: int = None, separator: str = "\n\n"):
-        self.chunk_size = chunk_size or settings.CHUNK_SIZE
-        self.chunk_overlap = chunk_overlap or settings.CHUNK_OVERLAP
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200, separator: str = "\n\n"):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
         self.separator = separator
-        
         self.text_splitter = CharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            separator=self.separator
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separator=separator
         )
+        
+        logger.info("Initialized CharacterChunker", 
+                   chunk_size=chunk_size, 
+                   chunk_overlap=chunk_overlap,
+                   separator=separator)
     
     def chunk_documents(self, documents: List[Document]) -> List[Document]:
-        """Chunk documents into smaller pieces"""
+        """Chunk documents using character splitting"""
         try:
-            chunked_documents = []
-            
-            for doc in documents:
-                chunks = self.text_splitter.split_documents([doc])
-                
-                # Add chunk metadata
-                for i, chunk in enumerate(chunks):
-                    chunk.metadata.update({
-                        "chunk_index": i,
-                        "chunk_size": len(chunk.page_content),
-                        "chunk_hash": hashlib.sha256(chunk.page_content.encode()).hexdigest(),
-                        "chunker": "CharacterTextChunker",
-                        "separator": self.separator,
-                        "original_document": doc.metadata.get("source", "unknown")
-                    })
-                
-                chunked_documents.extend(chunks)
-            
-            logger.info("Documents chunked successfully", 
-                       input_documents=len(documents),
-                       output_chunks=len(chunked_documents),
-                       chunker="CharacterTextChunker")
-            
-            return chunked_documents
-            
-        except Exception as e:
-            logger.error("Failed to chunk documents", error=str(e))
-            raise
-    
-    def chunk_text(self, text: str, metadata: Dict[str, Any] = None) -> List[Document]:
-        """Chunk text into smaller pieces"""
-        try:
-            metadata = metadata or {}
-            
-            # Create document from text
-            document = Document(page_content=text, metadata=metadata)
-            
-            # Chunk the document
-            chunks = self.text_splitter.split_documents([document])
+            chunks = self.text_splitter.split_documents(documents)
             
             # Add chunk metadata
             for i, chunk in enumerate(chunks):
                 chunk.metadata.update({
-                    "chunk_index": i,
-                    "chunk_size": len(chunk.page_content),
-                    "chunk_hash": hashlib.sha256(chunk.page_content.encode()).hexdigest(),
-                    "chunker": "CharacterTextChunker",
+                    "chunk_id": i,
+                    "chunker": "CharacterChunker",
+                    "chunk_size": self.chunk_size,
+                    "chunk_overlap": self.chunk_overlap,
                     "separator": self.separator
                 })
             
-            logger.info("Text chunked successfully", 
-                       input_length=len(text),
-                       output_chunks=len(chunks))
-            
-            return chunks
-            
-        except Exception as e:
-            logger.error("Failed to chunk text", error=str(e))
-            raise
-
-class TokenTextChunker(BaseTextChunker):
-    """Token-based text chunker"""
-    
-    def __init__(self, chunk_size: int = None, chunk_overlap: int = None):
-        self.chunk_size = chunk_size or settings.CHUNK_SIZE
-        self.chunk_overlap = chunk_overlap or settings.CHUNK_OVERLAP
-        
-        self.text_splitter = TokenTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap
-        )
-    
-    def chunk_documents(self, documents: List[Document]) -> List[Document]:
-        """Chunk documents into smaller pieces"""
-        try:
-            chunked_documents = []
-            
-            for doc in documents:
-                chunks = self.text_splitter.split_documents([doc])
-                
-                # Add chunk metadata
-                for i, chunk in enumerate(chunks):
-                    chunk.metadata.update({
-                        "chunk_index": i,
-                        "chunk_size": len(chunk.page_content),
-                        "chunk_hash": hashlib.sha256(chunk.page_content.encode()).hexdigest(),
-                        "chunker": "TokenTextChunker",
-                        "original_document": doc.metadata.get("source", "unknown")
-                    })
-                
-                chunked_documents.extend(chunks)
-            
             logger.info("Documents chunked successfully", 
-                       input_documents=len(documents),
-                       output_chunks=len(chunked_documents),
-                       chunker="TokenTextChunker")
-            
-            return chunked_documents
+                       original_docs=len(documents), 
+                       chunks=len(chunks))
+            return chunks
             
         except Exception as e:
             logger.error("Failed to chunk documents", error=str(e))
             raise
     
-    def chunk_text(self, text: str, metadata: Dict[str, Any] = None) -> List[Document]:
-        """Chunk text into smaller pieces"""
+    def chunk_text(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """Chunk text using character splitting"""
         try:
-            metadata = metadata or {}
+            if metadata is None:
+                metadata = {}
             
             # Create document from text
             document = Document(page_content=text, metadata=metadata)
             
             # Chunk the document
-            chunks = self.text_splitter.split_documents([document])
-            
-            # Add chunk metadata
-            for i, chunk in enumerate(chunks):
-                chunk.metadata.update({
-                    "chunk_index": i,
-                    "chunk_size": len(chunk.page_content),
-                    "chunk_hash": hashlib.sha256(chunk.page_content.encode()).hexdigest(),
-                    "chunker": "TokenTextChunker"
-                })
+            chunks = self.chunk_documents([document])
             
             logger.info("Text chunked successfully", 
-                       input_length=len(text),
-                       output_chunks=len(chunks))
-            
+                       text_length=len(text), 
+                       chunks=len(chunks))
             return chunks
             
         except Exception as e:
             logger.error("Failed to chunk text", error=str(e))
             raise
 
-class TextChunkerManager:
+class TokenChunker(BaseTextChunker):
+    """Token-based text chunker"""
+    
+    def __init__(self, chunk_size: int = 512, chunk_overlap: int = 50):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.text_splitter = TokenTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
+        
+        logger.info("Initialized TokenChunker", 
+                   chunk_size=chunk_size, 
+                   chunk_overlap=chunk_overlap)
+    
+    def chunk_documents(self, documents: List[Document]) -> List[Document]:
+        """Chunk documents using token splitting"""
+        try:
+            chunks = self.text_splitter.split_documents(documents)
+            
+            # Add chunk metadata
+            for i, chunk in enumerate(chunks):
+                chunk.metadata.update({
+                    "chunk_id": i,
+                    "chunker": "TokenChunker",
+                    "chunk_size": self.chunk_size,
+                    "chunk_overlap": self.chunk_overlap
+                })
+            
+            logger.info("Documents chunked successfully", 
+                       original_docs=len(documents), 
+                       chunks=len(chunks))
+            return chunks
+            
+        except Exception as e:
+            logger.error("Failed to chunk documents", error=str(e))
+            raise
+    
+    def chunk_text(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """Chunk text using token splitting"""
+        try:
+            if metadata is None:
+                metadata = {}
+            
+            # Create document from text
+            document = Document(page_content=text, metadata=metadata)
+            
+            # Chunk the document
+            chunks = self.chunk_documents([document])
+            
+            logger.info("Text chunked successfully", 
+                       text_length=len(text), 
+                       chunks=len(chunks))
+            return chunks
+            
+        except Exception as e:
+            logger.error("Failed to chunk text", error=str(e))
+            raise
+
+class ChunkerManager:
     """Manager for different text chunkers"""
     
     def __init__(self):
         self.chunkers = {
-            "recursive": RecursiveTextChunker(),
-            "character": CharacterTextChunker(),
-            "token": TokenTextChunker()
+            "recursive": RecursiveCharacterChunker(),
+            "character": CharacterChunker(),
+            "token": TokenChunker()
         }
         self.default_chunker = "recursive"
+        
+        logger.info("Initialized ChunkerManager", 
+                   available_chunkers=list(self.chunkers.keys()),
+                   default_chunker=self.default_chunker)
     
-    def chunk_documents(self, documents: List[Document], chunker_type: str = None) -> List[Document]:
-        """Chunk documents using specified chunker"""
-        chunker_type = chunker_type or self.default_chunker
+    def get_chunker(self, chunker_type: Optional[str] = None) -> BaseTextChunker:
+        """Get chunker by type"""
+        if chunker_type is None:
+            chunker_type = self.default_chunker
         
         if chunker_type not in self.chunkers:
-            raise ValueError(f"Unknown chunker type: {chunker_type}")
+            logger.warning("Unknown chunker type, using default", 
+                          requested_type=chunker_type,
+                          default_type=self.default_chunker)
+            chunker_type = self.default_chunker
         
-        chunker = self.chunkers[chunker_type]
+        return self.chunkers[chunker_type]
+    
+    def chunk_documents(self, documents: List[Document], chunker_type: Optional[str] = None) -> List[Document]:
+        """Chunk documents using specified chunker"""
+        chunker = self.get_chunker(chunker_type)
         return chunker.chunk_documents(documents)
     
-    def chunk_text(self, text: str, metadata: Dict[str, Any] = None, chunker_type: str = None) -> List[Document]:
+    def chunk_text(self, text: str, metadata: Optional[Dict[str, Any]] = None, chunker_type: Optional[str] = None) -> List[Document]:
         """Chunk text using specified chunker"""
-        chunker_type = chunker_type or self.default_chunker
-        
-        if chunker_type not in self.chunkers:
-            raise ValueError(f"Unknown chunker type: {chunker_type}")
-        
-        chunker = self.chunkers[chunker_type]
+        chunker = self.get_chunker(chunker_type)
         return chunker.chunk_text(text, metadata)
     
     def get_available_chunkers(self) -> List[str]:
-        """Get list of available chunkers"""
+        """Get list of available chunker types"""
         return list(self.chunkers.keys())
 
 # Global instance
-text_chunker_manager = TextChunkerManager() 
+chunker_manager = ChunkerManager() 

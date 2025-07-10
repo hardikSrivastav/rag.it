@@ -3,13 +3,13 @@ from pathlib import Path
 import os
 from abc import ABC, abstractmethod
 
-from langchain.document_loaders import (
+from langchain_community.document_loaders import (
     PyPDFLoader,
     UnstructuredWordDocumentLoader,
     UnstructuredMarkdownLoader,
     TextLoader
 )
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from app.core.config import settings
 from app.core.logging import get_logger

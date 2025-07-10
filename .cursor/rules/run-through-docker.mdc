@@ -3,4 +3,4 @@ alwaysApply: true
 ---
 All the services in this project will run through docker, which includes but is not limited to, frontend (NextJS apps), backend (FastAPI apps), databases (redis, postgres, mongo, qdrant, etc), and microservices. Before spinning anything up from scratch, check if it is already running. Docker auto-updates on changes usually, so no need to restart after every change. 
 
-General rule of thumb about ports. If something conventionally runs on port x, we will run it on port x + 5. For example, if NextJS based frontend apps run on 3000, we'll run them on 3005. Same for FastAPI, running on 8792, etc. Also true for databases.
+General rule of thumb about ports: If something conventionally runs on port x, we will run it on port x + 5. For example, if NextJS based frontend apps run on 3000, we'll run them on 3005. Same for FastAPI, running on 8792, etc. Also true for databases.
