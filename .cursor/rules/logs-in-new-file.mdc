@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+In all new implementations or whenever adding logging anywhere, ensure that there is a specific file where those logs are persisted, with timestamps, for review later on. This is true for frontend, backend, and databases. The directory should necessarily be in .gitignore

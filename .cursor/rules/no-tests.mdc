@@ -1,0 +1,5 @@
+---
+description: Creating something new or testing something
+alwaysApply: false
+---
+Don't create tests. Add logging instead
