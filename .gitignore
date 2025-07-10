@@ -155,3 +155,4 @@ Thumbs.db
 # Local development
 .env.local
 .env.development 
+.cursor

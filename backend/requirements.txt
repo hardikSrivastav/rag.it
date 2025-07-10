@@ -19,6 +19,7 @@ langchain-text-splitters>=0.0.1,<0.1.0
 
 # Text processing dependencies
 tiktoken>=0.5.1
+nltk>=3.8
 
 # Document processing
 pypdf==3.17.1
