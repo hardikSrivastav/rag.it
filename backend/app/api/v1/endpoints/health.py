@@ -3,6 +3,7 @@ from typing import Dict, Any
 
 from app.core.logging import get_logger
 from app.services.rag_pipeline import rag_pipeline
+from app.services.startup_service import startup_service
 
 logger = get_logger(__name__)
 
@@ -24,6 +25,10 @@ async def detailed_health_check():
         # Get health status of all components
         health_status = rag_pipeline.health_check()
         
+        # Add filesystem health
+        filesystem_status = startup_service.get_status()
+        health_status["filesystem"] = filesystem_status['startup_completed']
+        
         # Determine overall health
         all_healthy = all(status for status in health_status.values())
         
@@ -32,6 +37,7 @@ async def detailed_health_check():
             "service": "rag-system",
             "version": "1.0.0",
             "components": health_status,
+            "filesystem_details": filesystem_status,
             "timestamp": logger.info("Health check completed")
         }
         
@@ -89,5 +95,28 @@ async def llm_providers_health():
         return {
             "status": "unhealthy",
             "component": "llm-providers",
+            "error": str(e)
+        }
+
+
+@router.get("/components/filesystem")
+async def filesystem_health():
+    """Check file system indexing health"""
+    try:
+        status = startup_service.get_status()
+        
+        return {
+            "status": "healthy" if status['startup_completed'] else "initializing",
+            "component": "filesystem",
+            "startup_completed": status['startup_completed'],
+            "indexer_status": status['indexer_status'],
+            "watcher_status": status['watcher_status']
+        }
+        
+    except Exception as e:
+        logger.error("Filesystem health check failed", error=str(e))
+        return {
+            "status": "unhealthy",
+            "component": "filesystem",
             "error": str(e)
         } 

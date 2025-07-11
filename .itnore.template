@@ -1,0 +1,270 @@
+# .itnore file template
+# This file tells the indexing system which files and directories to skip
+# Patterns follow Unix shell-style wildcards (fnmatch)
+
+# ===== FILE PATTERNS =====
+# Skip specific file types
+*.log
+*.tmp
+*.temp
+*.cache
+*.bak
+*.backup
+*.old
+*.orig
+*.swp
+*.swo
+*~
+
+# Skip specific filenames
+Thumbs.db
+.DS_Store
+desktop.ini
+*.pid
+*.lock
+
+# ===== DIRECTORY PATTERNS =====
+# Skip entire directories (use trailing slash)
+temp/
+tmp/
+logs/
+cache/
+backup/
+backups/
+archive/
+archives/
+build/
+dist/
+out/
+target/
+
+# Development directories
+node_modules/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.tox/
+.coverage/
+htmlcov/
+
+# IDE directories
+.idea/
+.vscode/
+.eclipse/
+.metadata/
+
+# OS directories
+.Trash/
+.Recycle.Bin/
+$RECYCLE.BIN/
+System Volume Information/
+
+# ===== PATH PATTERNS =====
+# Skip files in specific subdirectories
+*/temp/*
+*/tmp/*
+*/logs/*
+*/cache/*
+*/build/*
+*/dist/*
+*/node_modules/*
+
+# Skip test files in any directory
+*/test/*
+*/tests/*
+*_test.py
+*_tests.py
+test_*.py
+tests_*.py
+
+# ===== ADVANCED PATTERNS =====
+# Skip files matching complex patterns
+**/build/**
+**/dist/**
+**/node_modules/**
+**/.git/**
+**/.svn/**
+**/.hg/**
+
+# Skip files with specific extensions in specific directories
+src/**/*.pyc
+src/**/*.pyo
+src/**/*.pyd
+lib/**/*.so
+lib/**/*.dylib
+lib/**/*.dll
+
+# Skip large data files
+*.csv
+*.json
+*.xml
+*.sql
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+
+# Skip media files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+*.wma
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.ico
+*.svg
+*.webp
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
+*.xls
+*.xlsx
+
+# Skip compressed files
+*.zip
+*.tar
+*.gz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.jar
+*.war
+*.ear
+
+# Skip binary executables
+*.exe
+*.bin
+*.app
+*.deb
+*.rpm
+*.dmg
+*.msi
+*.pkg
+
+# ===== CONFIGURATION FILES =====
+# Skip sensitive configuration files
+*.env
+*.env.local
+*.env.production
+*.env.development
+.env.*
+config.ini
+settings.ini
+secrets.yaml
+secrets.yml
+credentials.json
+auth.json
+token.txt
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+
+# ===== EXAMPLES BY LANGUAGE/FRAMEWORK =====
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# JavaScript/Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+.node_repl_history
+*.tgz
+*.tar.gz
+
+# Java
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.logs
+hs_err_pid*
+
+# C/C++
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Rust
+target/
+Cargo.lock
+*.rs.bk
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Git
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+
+# Comments and examples:
+# - Use * for any characters within a filename
+# - Use ? for single character
+# - Use [abc] for any character in brackets
+# - Use ** for recursive directory matching
+# - Use / at the end for directories
+# - Use # for comments
+# - Patterns are case-sensitive
+# - Each pattern should be on its own line

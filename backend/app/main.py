@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.api.v1.api import api_router
 from app.core.database import init_db
+from app.services.startup_service import startup_service
 
 # Setup logging
 setup_logging()
@@ -16,9 +17,18 @@ setup_logging()
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
+    
+    # Initialize file system indexing
+    await startup_service.initialize()
+    
     yield
+    
     # Shutdown - cleanup if needed
-    pass
+    from app.services.file_watcher import file_watcher
+    file_watcher.stop_watching()
+    
+    from app.services.file_system_indexer import file_system_indexer
+    file_system_indexer.stop_background_indexing()
 
 app = FastAPI(
     title="RAG System API",

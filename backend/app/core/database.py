@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, JSON
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, JSON, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from datetime import datetime
@@ -85,6 +85,66 @@ class ChatMessage(Base):
     
     def __repr__(self):
         return f"<ChatMessage(id={self.id}, session_id='{self.session_id}', role='{self.role}')>"
+
+
+class FileSystemNode(Base):
+    """File system node model for Merkle tree persistence"""
+    __tablename__ = "filesystem_nodes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    path = Column(String, unique=True, index=True)
+    hash = Column(String, index=True)
+    node_type = Column(String, index=True)  # 'file' or 'directory'
+    size = Column(Integer)
+    modified_time = Column(Float)
+    permissions = Column(Integer)
+    parent_path = Column(String, index=True, nullable=True)
+    children_hashes = Column(JSON, nullable=True)  # List of child hashes for directories
+    last_indexed = Column(DateTime, nullable=True)
+    should_index = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<FileSystemNode(id={self.id}, path='{self.path}', type='{self.node_type}')>"
+
+
+class MerkleSnapshot(Base):
+    """Merkle tree snapshot model for change tracking"""
+    __tablename__ = "merkle_snapshots"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    root_path = Column(String, index=True)
+    root_hash = Column(String, index=True)
+    total_files = Column(Integer)
+    total_directories = Column(Integer)
+    total_size_bytes = Column(Integer)
+    scan_duration_seconds = Column(Float)
+    changes_detected = Column(Integer, default=0)
+    files_indexed = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<MerkleSnapshot(id={self.id}, root_path='{self.root_path}', files={self.total_files})>"
+
+
+class IndexingPolicy(Base):
+    """Indexing policy model for file type filtering"""
+    __tablename__ = "indexing_policies"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    path_pattern = Column(String, index=True)  # Glob pattern for paths
+    file_extensions = Column(JSON, nullable=True)  # List of allowed extensions
+    max_file_size_mb = Column(Integer, nullable=True)  # Max file size in MB
+    should_index = Column(Boolean, default=True)
+    priority = Column(Integer, default=0)  # Higher number = higher priority
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<IndexingPolicy(id={self.id}, name='{self.name}', pattern='{self.path_pattern}')>"
 
 def create_tables():
     """Create all database tables"""
