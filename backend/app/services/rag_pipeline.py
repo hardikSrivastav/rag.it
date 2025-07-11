@@ -73,6 +73,10 @@ class RAGPipeline:
         db = next(get_db())
         
         try:
+            # Validate text content
+            if not text or not text.strip():
+                raise ValueError("Text content is empty or contains only whitespace")
+            
             # Create document record
             doc_record = DocumentModel(
                 filename=metadata.get("filename", "custom_text"),
@@ -115,11 +119,35 @@ class RAGPipeline:
             # Load document
             documents = self.document_loader.load_document(doc_record.file_path)
             
+            # Validate documents have content
+            if not documents:
+                raise ValueError(f"No documents loaded from file: {doc_record.file_path}")
+            
             # Chunk documents
             chunks = self.text_chunker.chunk_documents(documents)
             
+            # Filter out empty chunks
+            valid_chunks = []
+            for chunk in chunks:
+                if chunk.page_content and chunk.page_content.strip():
+                    valid_chunks.append(chunk)
+                else:
+                    logger.debug("Skipping empty chunk", 
+                               document_id=doc_record.id,
+                               chunk_content_length=len(chunk.page_content) if chunk.page_content else 0)
+            
+            if not valid_chunks:
+                raise ValueError(f"No valid text chunks found in document: {doc_record.file_path}")
+            
+            chunks = valid_chunks
+            
             # Generate embeddings
             texts = [chunk.page_content for chunk in chunks]
+            
+            # Validate texts before embedding
+            if not texts or all(not text.strip() for text in texts):
+                raise ValueError(f"No valid text content to embed from document: {doc_record.file_path}")
+            
             embeddings = self.embedding_manager.embed_texts(texts)
             
             # Prepare metadata for vector store

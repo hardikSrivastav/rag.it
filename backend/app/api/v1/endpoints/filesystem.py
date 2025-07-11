@@ -558,3 +558,107 @@ async def get_node_details(
     except Exception as e:
         logger.error(f"Failed to get node details: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get node details: {str(e)}")
+
+
+class RemoveDirectoryIndexRequest(BaseModel):
+    path: str
+    remove_from_vector_store: bool = True
+
+
+@router.delete("/remove-directory-index")
+async def remove_directory_index(request: RemoveDirectoryIndexRequest, db: Session = Depends(get_db)):
+    """Remove a directory index, its Merkle tree, and all associated data"""
+    try:
+        from app.core.database import FileSystemNode, MerkleSnapshot, Document, DocumentChunk
+        from app.services.rag_pipeline import rag_pipeline
+        
+        directory_path = Path(request.path).resolve()
+        path_str = str(directory_path)
+        
+        logger.info(f"Starting removal of directory index: {path_str}")
+        
+        # Get all documents that belong to this directory
+        documents_to_remove = (
+            db.query(Document)
+            .filter(Document.file_path.like(f"{path_str}%"))
+            .all()
+        )
+        
+        removed_stats = {
+            "documents_removed": 0,
+            "chunks_removed": 0,
+            "filesystem_nodes_removed": 0,
+            "merkle_snapshots_removed": 0,
+            "vector_store_cleanup": False
+        }
+        
+        # Remove documents and their chunks from vector store and database
+        if documents_to_remove:
+            logger.info(f"Found {len(documents_to_remove)} documents to remove")
+            
+            for doc in documents_to_remove:
+                try:
+                    if request.remove_from_vector_store:
+                        # Remove from vector store (Qdrant) and database
+                        success = rag_pipeline.delete_document(doc.id)
+                        if success:
+                            logger.debug(f"Successfully removed document {doc.id} from vector store")
+                        else:
+                            logger.warning(f"Failed to remove document {doc.id} from vector store")
+                    else:
+                        # Only remove from database, keep vectors
+                        chunks = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).all()
+                        for chunk in chunks:
+                            db.delete(chunk)
+                        db.delete(doc)
+                        
+                    removed_stats["documents_removed"] += 1
+                    
+                except Exception as e:
+                    logger.error(f"Failed to remove document {doc.id}: {e}")
+            
+            removed_stats["vector_store_cleanup"] = request.remove_from_vector_store
+        
+        # Remove filesystem nodes
+        filesystem_nodes = (
+            db.query(FileSystemNode)
+            .filter(FileSystemNode.path.like(f"{path_str}%"))
+            .all()
+        )
+        
+        if filesystem_nodes:
+            logger.info(f"Found {len(filesystem_nodes)} filesystem nodes to remove")
+            
+            for node in filesystem_nodes:
+                db.delete(node)
+                removed_stats["filesystem_nodes_removed"] += 1
+        
+        # Remove Merkle snapshots for this directory
+        merkle_snapshots = (
+            db.query(MerkleSnapshot)
+            .filter(MerkleSnapshot.root_path == path_str)
+            .all()
+        )
+        
+        if merkle_snapshots:
+            logger.info(f"Found {len(merkle_snapshots)} Merkle snapshots to remove")
+            
+            for snapshot in merkle_snapshots:
+                db.delete(snapshot)
+                removed_stats["merkle_snapshots_removed"] += 1
+        
+        # Commit all changes
+        db.commit()
+        
+        logger.info("Directory index removal completed", **removed_stats)
+        
+        return {
+            "success": True,
+            "message": f"Successfully removed directory index for: {path_str}",
+            "stats": removed_stats
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to remove directory index: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to remove directory index: {str(e)}")
