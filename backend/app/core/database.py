@@ -146,6 +146,88 @@ class IndexingPolicy(Base):
     def __repr__(self):
         return f"<IndexingPolicy(id={self.id}, name='{self.name}', pattern='{self.path_pattern}')>"
 
+
+class ConnectorConfig(Base):
+    """Connector configuration model"""
+    __tablename__ = "connector_configs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    connector_type = Column(String, index=True)  # github, notion, email, etc.
+    enabled = Column(Boolean, default=True)
+    sync_interval_minutes = Column(Integer, default=60)
+    max_items_per_sync = Column(Integer, default=1000)
+    last_sync = Column(DateTime, nullable=True)
+    last_sync_status = Column(String, nullable=True)  # success, error, running
+    credentials = Column(JSON, nullable=True)  # Encrypted credentials
+    settings = Column(JSON, nullable=True)  # Connector-specific settings
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<ConnectorConfig(id={self.id}, name='{self.name}', type='{self.connector_type}')>"
+
+
+class ConnectorSyncLog(Base):
+    """Connector sync operation log"""
+    __tablename__ = "connector_sync_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    connector_id = Column(Integer, index=True)
+    connector_name = Column(String, index=True)
+    sync_type = Column(String, index=True)  # full, incremental
+    status = Column(String, index=True)  # success, error, running
+    items_processed = Column(Integer, default=0)
+    items_added = Column(Integer, default=0)
+    items_updated = Column(Integer, default=0)
+    items_failed = Column(Integer, default=0)
+    duration_seconds = Column(Float, nullable=True)
+    error_message = Column(Text, nullable=True)
+    sync_token = Column(String, nullable=True)  # For incremental syncs
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    
+    def __repr__(self):
+        return f"<ConnectorSyncLog(id={self.id}, connector='{self.connector_name}', status='{self.status}')>"
+
+
+class OAuthConfig(Base):
+    """OAuth configuration model for persistent storage"""
+    __tablename__ = "oauth_configs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String, unique=True, index=True)  # github, google, etc.
+    client_id = Column(String)
+    client_secret = Column(String)  # Should be encrypted in production
+    redirect_uri = Column(String)
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<OAuthConfig(provider='{self.provider}', enabled={self.enabled})>"
+
+
+class OAuthToken(Base):
+    """OAuth token storage for users"""
+    __tablename__ = "oauth_tokens"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String, index=True)  # github, google, etc.
+    user_identifier = Column(String, index=True)  # github username, email, etc.
+    access_token = Column(String)  # Should be encrypted in production
+    token_type = Column(String, default="bearer")
+    scope = Column(String)
+    user_info = Column(JSON)  # Store user profile info
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_used = Column(DateTime, default=datetime.utcnow)
+    is_valid = Column(Boolean, default=True)
+    
+    def __repr__(self):
+        return f"<OAuthToken(provider='{self.provider}', user='{self.user_identifier}')>"
+
+
 def create_tables():
     """Create all database tables"""
     Base.metadata.create_all(bind=engine)

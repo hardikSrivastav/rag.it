@@ -39,6 +39,7 @@ The Internal RAG (Retrieval-Augmented Generation) System, or "Personal Knowledge
     *   **Messaging Apps (Whatsapp, etc.):** A connector that can process exported chat histories. This would likely rely on a manual export from the user, but the system would automate the ingestion of the exported files.
     *   **Social Media (LinkedIn, X/Twitter):** Connectors to ingest personal activity, connections, messages, and posts. This would supplement the data from the "LinkedIn Post Engine."
     *   **Email:** A connector to sync emails from an email account, making them searchable. This would integrate with or replace the functionality of saving threads from the separate "Email Client" tool.
+    *   **Calendar:** A connector to sync calendar events, meetings, and appointments from Google Calendar, Outlook, or other calendar services. This enables queries about past meetings, upcoming events, and schedule analysis.
     *   **Specialized Apps:**
         *   **College/University Data:** Connectors for specific university portals for project data, grades, etc.
         *   **Health & Fitness Apps:** A connector for calorie tracking apps or other health data sources, to analyze personal habits and trends.

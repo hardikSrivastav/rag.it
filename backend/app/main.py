@@ -29,6 +29,9 @@ async def lifespan(app: FastAPI):
     
     from app.services.file_system_indexer import file_system_indexer
     file_system_indexer.stop_background_indexing()
+    
+    from app.services.connectors.manager import connector_manager
+    await connector_manager.cleanup()
 
 app = FastAPI(
     title="RAG System API",

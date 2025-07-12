@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.file_system_indexer import file_system_indexer
 from app.services.file_watcher import file_watcher
+from app.services.connectors.manager import connector_manager
 
 logger = get_logger(__name__)
 
@@ -27,6 +28,9 @@ class StartupService:
         try:
             # Initialize file system indexing
             await self._initialize_file_system_indexing()
+            
+            # Initialize connectors
+            await self._initialize_connectors()
             
             self.startup_completed = True
             logger.info("Application initialization completed successfully")
@@ -75,12 +79,28 @@ class StartupService:
         except Exception as e:
             logger.error(f"Initial indexing failed: {e}")
     
+    async def _initialize_connectors(self):
+        """Initialize data connectors"""
+        try:
+            logger.info("Initializing data connectors")
+            await connector_manager.initialize()
+            
+            # Start background syncs for enabled connectors
+            await connector_manager.start_background_syncs()
+            
+            logger.info("Data connectors initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize connectors: {e}")
+            # Don't raise - connectors are optional
+    
     def get_status(self) -> dict:
         """Get startup service status"""
         return {
             "startup_completed": self.startup_completed,
             "indexer_status": file_system_indexer.get_indexing_status(),
-            "watcher_status": file_watcher.get_status()
+            "watcher_status": file_watcher.get_status(),
+            "connectors_status": connector_manager.get_all_connector_status()
         }
 
 
