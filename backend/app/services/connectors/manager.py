@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from .base import BaseConnector, ConnectorConfig as BaseConnectorConfig, SyncResult
 from .github_connector import GitHubConnector
 from .notion_connector import NotionConnector
+from .gmail_connector import GmailConnector
 from app.core.database import get_db, ConnectorConfig, ConnectorSyncLog
 from app.core.logging import get_logger
 
@@ -20,6 +21,7 @@ class ConnectorManager:
         self.connector_classes: Dict[str, Type[BaseConnector]] = {
             "github": GitHubConnector,
             "notion": NotionConnector,
+            "gmail": GmailConnector,
             # Add other connectors as they're implemented
         }
     

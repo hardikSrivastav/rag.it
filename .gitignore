@@ -156,3 +156,4 @@ Thumbs.db
 .env.local
 .env.development 
 .cursor
+*.yaml

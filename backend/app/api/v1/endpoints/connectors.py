@@ -198,6 +198,18 @@ async def get_supported_connector_types():
                     "sync_databases",
                     "max_database_entries"
                 ]
+            },
+            {
+                "type": "gmail",
+                "name": "Gmail",
+                "description": "Index emails from Gmail account",
+                "required_credentials": ["access_token"],
+                "optional_settings": [
+                    "max_emails_per_sync",
+                    "days_back",
+                    "include_sent",
+                    "include_drafts"
+                ]
             }
             # Add other connector types as they're implemented
         ]

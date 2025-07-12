@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel
 
 from app.core.logging import get_logger
-from app.services.oauth_service import github_oauth_service, NotionOAuthService
+from app.services.oauth_service import github_oauth_service, gmail_oauth_service, NotionOAuthService
 from app.services.connectors.manager import connector_manager
 
 # Initialize Notion OAuth service
@@ -96,67 +96,135 @@ async def start_github_oauth(request: ConnectorOAuthRequest):
 
 
 @router.get("/github/callback")
-async def github_oauth_callback(
-    code: str = Query(..., description="Authorization code from GitHub"),
-    state: str = Query(..., description="State parameter for security"),
-    error: Optional[str] = Query(None, description="Error from GitHub OAuth")
-):
+async def github_oauth_callback(code: str, state: str):
     """Handle GitHub OAuth callback"""
     try:
-        if error:
-            logger.error(f"GitHub OAuth error: {error}")
-            raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
-        
         # Exchange code for token
         token_data = await github_oauth_service.exchange_code_for_token(code, state)
         
-        # Create connector with OAuth token
+        # Create connector with the token
         connector_name = token_data["connector_name"]
         
-        # Check if connector already exists
-        existing_status = connector_manager.get_connector_status(connector_name)
-        if existing_status:
-            # Update existing connector
-            await connector_manager.remove_connector(connector_name)
-        
-        # Create new connector with OAuth credentials
+        # Add connector to manager
         await connector_manager.add_connector(
             name=connector_name,
             connector_type="github",
             credentials={
-                "token": token_data["access_token"],
+                "access_token": token_data["access_token"],
                 "token_type": token_data["token_type"],
-                "oauth_user": token_data["user_info"]
+                "scope": token_data["scope"]
             },
             settings={
-                "repositories": [],  # Will be populated later
-                "file_extensions": [".py", ".js", ".ts", ".md", ".txt", ".json", ".yaml", ".yml"],
-                "ignored_patterns": ["node_modules", "__pycache__", ".git", "dist", "build"],
-                "max_file_size_kb": 500
+                "user_info": token_data["user_info"],
+                "sync_interval_minutes": 60
             },
-            enabled=False  # Start disabled until repositories are configured
+            enabled=True
         )
         
-        logger.info(f"GitHub connector '{connector_name}' created successfully via OAuth")
-        
-        # Return success page or redirect
         return {
             "success": True,
-            "message": f"GitHub connector '{connector_name}' authorized successfully!",
+            "message": f"GitHub connector '{connector_name}' created successfully",
             "connector_name": connector_name,
-            "user_info": token_data["user_info"],
-            "next_steps": [
-                "Configure repositories to index",
-                "Enable the connector",
-                "Start syncing"
-            ]
+            "user_info": token_data["user_info"]
         }
         
     except ValueError as e:
-        logger.error(f"OAuth callback validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"OAuth callback failed: {e}")
+        logger.error(f"GitHub OAuth callback failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Gmail OAuth endpoints
+@router.get("/gmail/authorize")
+async def gmail_oauth_authorize(connector_name: str):
+    """Start Gmail OAuth flow"""
+    try:
+        if not gmail_oauth_service.is_configured():
+            raise HTTPException(
+                status_code=400, 
+                detail="Gmail OAuth not configured. Please configure OAuth credentials first."
+            )
+        
+        auth_data = gmail_oauth_service.generate_auth_url(connector_name)
+        
+        return {
+            "auth_url": auth_data["auth_url"],
+            "state": auth_data["state"],
+            "expires_in": auth_data["expires_in"],
+            "message": "Visit the auth_url to authorize the Gmail connector"
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Gmail OAuth authorization failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/gmail/callback")
+async def gmail_oauth_callback(code: str, state: str):
+    """Handle Gmail OAuth callback"""
+    try:
+        # Exchange code for token
+        token_data = await gmail_oauth_service.exchange_code_for_token(code, state)
+        
+        # Create connector with the token
+        connector_name = token_data["connector_name"]
+        
+        # Add connector to manager
+        await connector_manager.add_connector(
+            name=connector_name,
+            connector_type="gmail",
+            credentials={
+                "access_token": token_data["access_token"],
+                "token_type": token_data["token_type"],
+                "refresh_token": token_data.get("refresh_token"),
+                "scope": token_data["scope"]
+            },
+            settings={
+                "user_info": token_data["user_info"],
+                "sync_interval_minutes": 60,
+                "max_emails_per_sync": 100,
+                "days_back": 30,
+                "include_sent": True,
+                "include_drafts": False
+            },
+            enabled=True
+        )
+        
+        return {
+            "success": True,
+            "message": f"Gmail connector '{connector_name}' created successfully",
+            "connector_name": connector_name,
+            "user_info": token_data["user_info"]
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Gmail OAuth callback failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/gmail/configure")
+async def configure_gmail_oauth(request: OAuthConfigRequest):
+    """Configure Gmail OAuth credentials"""
+    try:
+        gmail_oauth_service.configure(
+            client_id=request.client_id,
+            client_secret=request.client_secret,
+            redirect_uri=request.redirect_uri
+        )
+        
+        return {
+            "success": True,
+            "message": "Gmail OAuth configured successfully",
+            "provider": "gmail"
+        }
+        
+    except Exception as e:
+        logger.error(f"Gmail OAuth configuration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

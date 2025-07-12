@@ -88,12 +88,13 @@ class OAuthConfigManager:
     
     # OAuth Token Management
     def save_oauth_token(self, provider: str, user_identifier: str, access_token: str, 
-                        token_type: str = "bearer", scope: str = "", user_info: Dict = None):
+                        token_type: str = "bearer", scope: str = "", user_info: Dict = None,
+                        refresh_token: str = None, expires_in: int = None):
         """Save OAuth token for a user"""
         tokens = self._load_yaml(self.tokens_file)
         
         token_key = f"{provider}_{user_identifier}"
-        tokens["tokens"][token_key] = {
+        token_data = {
             "provider": provider,
             "user_identifier": user_identifier,
             "access_token": access_token,
@@ -104,6 +105,18 @@ class OAuthConfigManager:
             "last_used": datetime.utcnow().isoformat(),
             "is_valid": True
         }
+        
+        # Add refresh token if provided
+        if refresh_token:
+            token_data["refresh_token"] = refresh_token
+        
+        # Add expiration if provided
+        if expires_in:
+            expires_at = datetime.utcnow().timestamp() + expires_in
+            token_data["expires_at"] = datetime.fromtimestamp(expires_at).isoformat()
+            token_data["expires_in"] = expires_in
+        
+        tokens["tokens"][token_key] = token_data
         tokens["updated_at"] = datetime.utcnow().isoformat()
         
         self._save_yaml(self.tokens_file, tokens)
@@ -138,6 +151,32 @@ class OAuthConfigManager:
         if token_key in tokens.get("tokens", {}):
             tokens["tokens"][token_key]["last_used"] = datetime.utcnow().isoformat()
             self._save_yaml(self.tokens_file, tokens)
+    
+    def update_oauth_token(self, provider: str, user_identifier: str, access_token: str,
+                          token_type: str = None, expires_in: int = None):
+        """Update an existing OAuth token (for refresh scenarios)"""
+        tokens = self._load_yaml(self.tokens_file)
+        token_key = f"{provider}_{user_identifier}"
+        
+        if token_key in tokens.get("tokens", {}):
+            token_data = tokens["tokens"][token_key]
+            token_data["access_token"] = access_token
+            token_data["last_used"] = datetime.utcnow().isoformat()
+            
+            if token_type:
+                token_data["token_type"] = token_type
+            
+            if expires_in:
+                expires_at = datetime.utcnow().timestamp() + expires_in
+                token_data["expires_at"] = datetime.fromtimestamp(expires_at).isoformat()
+                token_data["expires_in"] = expires_in
+            
+            tokens["updated_at"] = datetime.utcnow().isoformat()
+            self._save_yaml(self.tokens_file, tokens)
+            logger.info(f"OAuth token updated for {provider}:{user_identifier}")
+            return True
+        
+        return False
     
     def invalidate_token(self, provider: str, user_identifier: str):
         """Mark a token as invalid"""
