@@ -63,13 +63,14 @@ class ConnectorManager:
         # Create connector instance
         connector = connector_class(base_config)
         
-        # Test connection
-        if await connector.test_connection():
-            self.connectors[config.name] = connector
-            logger.info(f"Created connector: {config.name} ({config.connector_type})")
+        # Test connection (but don't fail if it doesn't work initially)
+        connection_ok = await connector.test_connection()
+        self.connectors[config.name] = connector
+        
+        if connection_ok:
+            logger.info(f"Created connector: {config.name} ({config.connector_type}) - connection OK")
         else:
-            logger.error(f"Failed to connect to {config.name}")
-            raise Exception(f"Connection test failed for {config.name}")
+            logger.warning(f"Created connector: {config.name} ({config.connector_type}) - connection test failed, will retry during sync")
         
         return connector
     
@@ -102,6 +103,53 @@ class ConnectorManager:
             
             logger.info(f"Added connector: {name} ({connector_type})")
             return name
+            
+        finally:
+            db.close()
+    
+    async def update_connector(self, connector_name: str, enabled: bool = None, 
+                              credentials: dict = None, settings: dict = None, 
+                              sync_interval_minutes: int = None) -> bool:
+        """Update an existing connector"""
+        db = next(get_db())
+        try:
+            # Get connector from database
+            config = db.query(ConnectorConfig).filter(ConnectorConfig.name == connector_name).first()
+            if not config:
+                return False
+            
+            # Update fields if provided
+            if enabled is not None:
+                config.enabled = enabled
+            if credentials is not None:
+                config.credentials = credentials
+            if settings is not None:
+                config.settings = settings
+            if sync_interval_minutes is not None:
+                config.sync_interval_minutes = sync_interval_minutes
+            
+            # Commit changes
+            db.commit()
+            db.refresh(config)
+            
+            # If connector is currently running, recreate it with new config
+            if connector_name in self.connectors:
+                # Stop the old connector
+                old_connector = self.connectors[connector_name]
+                old_connector.stop_background_sync()
+                if hasattr(old_connector, 'close'):
+                    await old_connector.close()
+                del self.connectors[connector_name]
+                
+                # Create new connector with updated config if enabled
+                if config.enabled:
+                    await self.create_connector(config)
+            elif config.enabled:
+                # Create connector if it wasn't running but is now enabled
+                await self.create_connector(config)
+            
+            logger.info(f"Updated connector: {connector_name}")
+            return True
             
         finally:
             db.close()
@@ -220,6 +268,44 @@ class ConnectorManager:
                 logger.info(f"Stopped background sync for {name}")
             except Exception as e:
                 logger.error(f"Failed to stop background sync for {name}: {e}")
+    
+    async def stop_connector_sync(self, name: str) -> bool:
+        """Stop ongoing sync for a specific connector"""
+        if name not in self.connectors:
+            return False
+        
+        connector = self.connectors[name]
+        
+        try:
+            stopped_something = False
+            
+            # Stop background sync task if running
+            if hasattr(connector, 'sync_task') and connector.sync_task and not connector.sync_task.done():
+                connector.stop_background_sync()
+                stopped_something = True
+                logger.info(f"Stopped background sync for connector: {name}")
+            
+            # Stop manual sync task if running
+            if hasattr(connector, 'manual_sync_task') and connector.manual_sync_task and not connector.manual_sync_task.done():
+                connector.manual_sync_task.cancel()
+                try:
+                    await connector.manual_sync_task
+                except asyncio.CancelledError:
+                    pass  # Expected when cancelling
+                stopped_something = True
+                logger.info(f"Stopped manual sync for connector: {name}")
+            
+            # Reset connector status to idle if we stopped something
+            if stopped_something:
+                connector.status = connector.status.__class__.IDLE
+                connector.last_error = None
+            
+            logger.info(f"Stop operation completed for connector: {name} (stopped: {stopped_something})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to stop sync for connector {name}: {e}")
+            return False
     
     def get_connector_status(self, name: str) -> Optional[Dict]:
         """Get status of a specific connector"""

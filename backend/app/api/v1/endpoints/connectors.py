@@ -82,6 +82,33 @@ async def get_connector(connector_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/{connector_name}")
+async def update_connector(connector_name: str, request: ConnectorUpdateRequest):
+    """Update an existing connector"""
+    try:
+        success = await connector_manager.update_connector(
+            connector_name=connector_name,
+            enabled=request.enabled,
+            credentials=request.credentials,
+            settings=request.settings,
+            sync_interval_minutes=request.sync_interval_minutes
+        )
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        
+        return {
+            "success": True,
+            "message": f"Connector '{connector_name}' updated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update connector {connector_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/{connector_name}")
 async def delete_connector(connector_name: str):
     """Delete a connector"""
@@ -127,6 +154,27 @@ async def sync_connector(connector_name: str, request: SyncRequest):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to sync connector {connector_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{connector_name}/stop")
+async def stop_connector_sync(connector_name: str):
+    """Stop/cancel ongoing sync for a connector"""
+    try:
+        success = await connector_manager.stop_connector_sync(connector_name)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Connector not found or not running")
+        
+        return {
+            "success": True,
+            "message": f"Sync stopped for connector '{connector_name}'"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to stop connector {connector_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

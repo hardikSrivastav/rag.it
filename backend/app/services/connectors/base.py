@@ -51,6 +51,7 @@ class BaseConnector(ABC):
         self.status = ConnectorStatus.IDLE
         self.last_error: Optional[str] = None
         self.sync_task: Optional[asyncio.Task] = None
+        self.manual_sync_task: Optional[asyncio.Task] = None
         
     @property
     @abstractmethod
@@ -91,6 +92,9 @@ class BaseConnector(ABC):
             logger.info(f"Starting sync for {self.connector_type} connector", 
                        connector=self.config.name, incremental=incremental)
             
+            # Create manual sync task for cancellation support
+            self.manual_sync_task = asyncio.current_task()
+            
             # Authenticate if needed
             if not await self.authenticate():
                 raise Exception("Authentication failed")
@@ -101,6 +105,7 @@ class BaseConnector(ABC):
             # Update config
             self.config.last_sync = datetime.utcnow()
             self.status = ConnectorStatus.IDLE
+            self.manual_sync_task = None
             
             logger.info(f"Sync completed for {self.connector_type} connector",
                        connector=self.config.name,
@@ -109,9 +114,27 @@ class BaseConnector(ABC):
             
             return result
             
+        except asyncio.CancelledError:
+            self.status = ConnectorStatus.IDLE
+            self.last_error = "Sync cancelled"
+            self.manual_sync_task = None
+            
+            logger.info(f"Sync cancelled for {self.connector_type} connector",
+                       connector=self.config.name)
+            
+            return SyncResult(
+                success=False,
+                items_processed=0,
+                items_added=0,
+                items_updated=0,
+                items_failed=0,
+                errors=["Sync cancelled"],
+                duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+            )
         except Exception as e:
             self.status = ConnectorStatus.ERROR
             self.last_error = str(e)
+            self.manual_sync_task = None
             
             logger.error(f"Sync failed for {self.connector_type} connector",
                         connector=self.config.name,
@@ -169,7 +192,8 @@ class BaseConnector(ABC):
             "last_sync": self.config.last_sync.isoformat() if self.config.last_sync else None,
             "last_error": self.last_error,
             "sync_interval_minutes": self.config.sync_interval_minutes,
-            "has_background_task": self.sync_task is not None and not self.sync_task.done()
+            "has_background_task": self.sync_task is not None and not self.sync_task.done(),
+            "has_manual_sync": self.manual_sync_task is not None and not self.manual_sync_task.done()
         }
     
     async def process_item_through_rag(self, item_data: Dict[str, Any], source_tool: str) -> bool:

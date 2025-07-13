@@ -25,7 +25,7 @@ class GmailConnector(BaseConnector):
         return "gmail"
     
     async def authenticate(self) -> bool:
-        """Authenticate with Gmail API using OAuth token"""
+        """Authenticate with Gmail API using OAuth token with automatic refresh"""
         try:
             # Try to get token from credentials first
             token = self.config.credentials.get("access_token")
@@ -38,27 +38,150 @@ class GmailConnector(BaseConnector):
                 logger.error("Gmail OAuth token not found")
                 return False
             
-            # Create session with auth headers
+            # Test current token first
+            if await self._test_token(token):
+                logger.info("Gmail token is valid")
+                return True
+            
+            # Token is invalid/expired - try to refresh
+            logger.info("Gmail token expired/invalid, attempting refresh...")
+            if await self._refresh_access_token():
+                logger.info("Gmail token refreshed successfully")
+                return True
+            
+            # Refresh failed
+            logger.error("Gmail token refresh failed - manual re-authentication required")
+            return False
+                    
+        except Exception as e:
+            logger.error(f"Gmail authentication error: {e}")
+            return False
+    
+    async def _test_token(self, token: str) -> bool:
+        """Test if the current token is valid"""
+        try:
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
                 "User-Agent": "RAG-System/1.0"
             }
             
-            self.session = aiohttp.ClientSession(headers=headers)
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(f"{self.api_base}/users/me/profile") as response:
+                    if response.status == 200:
+                        profile_data = await response.json()
+                        logger.info(f"Token valid for Gmail: {profile_data.get('emailAddress', 'Unknown')}")
+                        
+                        # Update session with valid token
+                        if self.session:
+                            await self.session.close()
+                        self.session = aiohttp.ClientSession(headers=headers)
+                        return True
+                    else:
+                        logger.warning(f"Token test failed: {response.status}")
+                        return False
+                        
+        except Exception as e:
+            logger.error(f"Token test error: {e}")
+            return False
+    
+    async def _refresh_access_token(self) -> bool:
+        """Refresh expired access token using refresh token"""
+        try:
+            refresh_token = self.config.credentials.get("refresh_token")
+            if not refresh_token:
+                logger.error("No refresh token available for Gmail")
+                return False
             
-            # Test authentication by getting user profile
-            async with self.session.get(f"{self.api_base}/users/me/profile") as response:
-                if response.status == 200:
-                    profile_data = await response.json()
-                    logger.info(f"Authenticated with Gmail: {profile_data.get('emailAddress', 'Unknown')}")
+            # Get OAuth config
+            oauth_config = self._get_oauth_config()
+            if not oauth_config:
+                logger.error("OAuth config not available")
+                return False
+            
+            # Prepare refresh request
+            refresh_data = {
+                "client_id": oauth_config["client_id"],
+                "client_secret": oauth_config["client_secret"],
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token"
+            }
+            
+            # Call Google's token refresh endpoint
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://oauth2.googleapis.com/token", data=refresh_data) as response:
+                    if response.status == 200:
+                        token_data = await response.json()
+                        new_access_token = token_data["access_token"]
+                        
+                        # Update connector credentials in database
+                        await self._update_connector_credentials({"access_token": new_access_token})
+                        
+                        # Update local config
+                        self.config.credentials["access_token"] = new_access_token
+                        
+                        logger.info("Gmail access token refreshed successfully")
+                        return True
+                    else:
+                        error_data = await response.text()
+                        logger.error(f"Token refresh failed: {response.status} - {error_data}")
+                        return False
+                        
+        except Exception as e:
+            logger.error(f"Token refresh error: {e}")
+            return False
+    
+    def _get_oauth_config(self) -> Optional[Dict[str, str]]:
+        """Get OAuth configuration for Gmail"""
+        try:
+            import yaml
+            import os
+            
+            config_path = os.path.join(os.path.dirname(__file__), "../../../config/oauth_config.yaml")
+            
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                
+                gmail_config = config.get('providers', {}).get('gmail', {})
+                return {
+                    "client_id": gmail_config.get('client_id'),
+                    "client_secret": gmail_config.get('client_secret')
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error reading OAuth config: {e}")
+            return None
+    
+    async def _update_connector_credentials(self, new_credentials: Dict[str, str]) -> bool:
+        """Update connector credentials in database"""
+        try:
+            from app.core.database import get_db, ConnectorConfig
+            
+            db = next(get_db())
+            try:
+                connector = db.query(ConnectorConfig).filter(ConnectorConfig.name == self.config.name).first()
+                if connector:
+                    # Merge new credentials with existing ones
+                    updated_credentials = connector.credentials.copy() if connector.credentials else {}
+                    updated_credentials.update(new_credentials)
+                    
+                    connector.credentials = updated_credentials
+                    db.commit()
+                    
+                    logger.info(f"Updated credentials for connector: {self.config.name}")
                     return True
                 else:
-                    logger.error(f"Gmail authentication failed: {response.status}")
+                    logger.error(f"Connector {self.config.name} not found in database")
                     return False
                     
+            finally:
+                db.close()
+                
         except Exception as e:
-            logger.error(f"Gmail authentication error: {e}")
+            logger.error(f"Error updating connector credentials: {e}")
             return False
     
     def _get_oauth_token(self) -> Optional[str]:

@@ -228,6 +228,46 @@ class OAuthToken(Base):
         return f"<OAuthToken(provider='{self.provider}', user='{self.user_identifier}')>"
 
 
+class DeletionLog(Base):
+    """Log of deletion operations"""
+    __tablename__ = "deletion_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    deletion_type = Column(String, index=True)  # source, repository, document, chunk
+    target_filters = Column(JSON)  # Filters used for deletion
+    documents_deleted = Column(Integer, default=0)
+    chunks_deleted = Column(Integer, default=0)
+    vectors_deleted = Column(Integer, default=0)
+    backup_id = Column(String, nullable=True)
+    executed_by = Column(String, default="system")
+    executed_at = Column(DateTime, default=datetime.utcnow)
+    duration_seconds = Column(Float, nullable=True)
+    success = Column(Boolean, default=True)
+    error_message = Column(Text, nullable=True)
+    
+    def __repr__(self):
+        return f"<DeletionLog(id={self.id}, type='{self.deletion_type}', docs={self.documents_deleted})>"
+
+
+class DeletionBackup(Base):
+    """Backup data for deleted items (for potential restoration)"""
+    __tablename__ = "deletion_backups"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    backup_id = Column(String, unique=True, index=True)
+    deletion_type = Column(String, index=True)
+    target_filters = Column(JSON)
+    document_count = Column(Integer)
+    chunk_count = Column(Integer)
+    backup_data = Column(JSON)  # Serialized document and chunk data
+    created_at = Column(DateTime, default=datetime.utcnow)
+    can_restore = Column(Boolean, default=True)
+    restored_at = Column(DateTime, nullable=True)
+    
+    def __repr__(self):
+        return f"<DeletionBackup(backup_id='{self.backup_id}', docs={self.document_count})>"
+
+
 def create_tables():
     """Create all database tables"""
     Base.metadata.create_all(bind=engine)
