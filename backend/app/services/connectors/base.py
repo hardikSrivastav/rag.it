@@ -26,8 +26,8 @@ class ConnectorConfig:
     sync_interval_minutes: int = 60  # Default 1 hour
     max_items_per_sync: int = 1000
     last_sync: Optional[datetime] = None
-    credentials: Dict[str, Any] = None
-    settings: Dict[str, Any] = None
+    credentials: Optional[Dict[str, Any]] = None
+    settings: Optional[Dict[str, Any]] = None
 
 
 @dataclass
