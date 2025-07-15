@@ -67,11 +67,31 @@ async def create_connector(request: ConnectorCreateRequest):
 
 @router.get("/{connector_name}")
 async def get_connector(connector_name: str):
-    """Get connector status and details"""
+    """Get connector status and detailed configuration"""
     try:
+        # Get runtime status
         status = connector_manager.get_connector_status(connector_name)
         if not status:
             raise HTTPException(status_code=404, detail="Connector not found")
+        
+        # Get detailed config from database
+        from app.core.database import get_db, ConnectorConfig
+        db = next(get_db())
+        try:
+            config = db.query(ConnectorConfig).filter(
+                ConnectorConfig.name == connector_name
+            ).first()
+            
+            if config:
+                # Add settings to the response
+                status["settings"] = config.settings or {}
+                status["credentials_configured"] = bool(config.credentials)
+                status["sync_interval_minutes"] = config.sync_interval_minutes
+                status["max_items_per_sync"] = config.max_items_per_sync
+                status["created_at"] = config.created_at.isoformat() if config.created_at else None
+                status["updated_at"] = config.updated_at.isoformat() if config.updated_at else None
+        finally:
+            db.close()
         
         return {"connector": status}
         
