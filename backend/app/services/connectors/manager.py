@@ -7,6 +7,7 @@ from .base import BaseConnector, ConnectorConfig as BaseConnectorConfig, SyncRes
 from .github_connector import GitHubConnector
 from .notion_connector import NotionConnector
 from .gmail_connector import GmailConnector
+from .calendar_connector import CalendarConnector
 from app.core.database import get_db, ConnectorConfig, ConnectorSyncLog
 from app.core.logging import get_logger
 
@@ -22,6 +23,7 @@ class ConnectorManager:
             "github": GitHubConnector,
             "notion": NotionConnector,
             "gmail": GmailConnector,
+            "calendar": CalendarConnector,
             # Add other connectors as they're implemented
         }
     

@@ -278,6 +278,18 @@ async def get_supported_connector_types():
                     "include_sent",
                     "include_drafts"
                 ]
+            },
+            {
+                "type": "calendar",
+                "name": "Google Calendar",
+                "description": "Index calendar events from Google Calendar",
+                "required_credentials": ["access_token", "refresh_token", "client_id", "client_secret"],
+                "optional_settings": [
+                    "calendar_ids",
+                    "sync_days_back",
+                    "sync_days_forward",
+                    "include_cancelled"
+                ]
             }
             # Add other connector types as they're implemented
         ]

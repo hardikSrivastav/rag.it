@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import RedirectResponse
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from pydantic import BaseModel
 
 from app.core.logging import get_logger
-from app.services.oauth_service import github_oauth_service, gmail_oauth_service, NotionOAuthService
+from app.services.oauth_service import github_oauth_service, gmail_oauth_service, NotionOAuthService, calendar_oauth_service
 from app.services.connectors.manager import connector_manager
 
 # Initialize Notion OAuth service
@@ -442,3 +442,247 @@ async def notion_oauth_callback(
     except Exception as e:
         logger.error(f"Notion OAuth callback failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Google Calendar OAuth endpoints
+@router.post("/calendar/configure")
+async def configure_calendar_oauth(request: OAuthConfigRequest):
+    """Configure Google Calendar OAuth credentials"""
+    try:
+        calendar_oauth_service.configure(
+            client_id=request.client_id,
+            client_secret=request.client_secret,
+            redirect_uri=request.redirect_uri
+        )
+        
+        return {
+            "success": True,
+            "message": "Google Calendar OAuth configured successfully",
+            "provider": "calendar"
+        }
+        
+    except Exception as e:
+        logger.error(f"Calendar OAuth configuration failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/calendar/status")
+async def get_calendar_oauth_status():
+    """Get Google Calendar OAuth configuration status"""
+    from app.core.oauth_config_manager import oauth_config_manager
+    
+    config = calendar_oauth_service.get_config()
+    stored_token = calendar_oauth_service.get_stored_token()
+    user_info = calendar_oauth_service.get_stored_user_info()
+    
+    return {
+        "configured": calendar_oauth_service.is_configured(),
+        "redirect_uri": config.get("redirect_uri") if config else None,
+        "has_stored_token": stored_token is not None,
+        "user_info": user_info,
+        "config_status": oauth_config_manager.get_config_status()
+    }
+
+
+@router.get("/calendar/authorize")
+async def calendar_oauth_authorize(connector_name: str):
+    """Start Google Calendar OAuth flow"""
+    try:
+        if not calendar_oauth_service.is_configured():
+            raise HTTPException(
+                status_code=400, 
+                detail="Google Calendar OAuth not configured. Please configure OAuth credentials first."
+            )
+        
+        # Calendar-specific scopes
+        scopes = [
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/userinfo.email"
+        ]
+        
+        auth_data = calendar_oauth_service.generate_auth_url(
+            connector_name=connector_name,
+            scopes=scopes
+        )
+        
+        return {
+            "auth_url": auth_data["auth_url"],
+            "state": auth_data["state"],
+            "expires_in": auth_data["expires_in"],
+            "message": "Visit the auth_url to authorize the Google Calendar connector"
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Calendar OAuth authorization failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/calendar/callback")
+async def calendar_oauth_callback(code: str, state: str):
+    """Handle Google Calendar OAuth callback"""
+    try:
+        # Exchange code for token
+        token_data = await calendar_oauth_service.exchange_code_for_token(code, state)
+        
+        # Create connector with the token
+        connector_name = token_data["connector_name"]
+        
+        # Add connector to manager
+        await connector_manager.add_connector(
+            name=connector_name,
+            connector_type="calendar",
+            credentials={
+                "access_token": token_data["access_token"],
+                "refresh_token": token_data.get("refresh_token"),
+                "token_type": token_data.get("token_type", "Bearer"),
+                "client_id": calendar_oauth_service.get_config()["client_id"],
+                "client_secret": calendar_oauth_service.get_config()["client_secret"],
+                "scope": token_data["scope"]
+            },
+            settings={
+                "user_info": token_data["user_info"],
+                "sync_interval_minutes": 60,
+                "calendar_ids": ["primary"],  # Default to primary calendar
+                "sync_days_back": 30,
+                "sync_days_forward": 90,
+                "include_cancelled": False
+            },
+            enabled=True
+        )
+        
+        return {
+            "success": True,
+            "message": f"Google Calendar connector '{connector_name}' created successfully",
+            "connector_name": connector_name,
+            "user_info": token_data["user_info"]
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Calendar OAuth callback failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/calendar/calendars/{connector_name}")
+async def get_calendar_list(connector_name: str):
+    """Get available calendars for a Google Calendar connector"""
+    try:
+        # Get connector
+        connector = connector_manager.connectors.get(connector_name)
+        if not connector:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        
+        if connector.connector_type != "calendar":
+            raise HTTPException(status_code=400, detail="Not a calendar connector")
+        
+        # Get access token
+        access_token = connector.config.credentials.get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No access token found")
+        
+        # Get calendar list
+        calendars = await get_user_calendars(access_token)
+        
+        return {
+            "success": True,
+            "calendars": calendars,
+            "total": len(calendars)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get calendars for {connector_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/calendar/calendars/{connector_name}")
+async def configure_calendar_list(
+    connector_name: str, 
+    calendar_ids: List[str]
+):
+    """Configure calendar IDs for a Google Calendar connector"""
+    try:
+        # Get connector from database and update settings
+        from app.core.database import get_db, ConnectorConfig
+        
+        db = next(get_db())
+        try:
+            config = db.query(ConnectorConfig).filter(ConnectorConfig.name == connector_name).first()
+            if not config:
+                raise HTTPException(status_code=404, detail="Connector not found")
+            
+            # Update settings
+            settings = config.settings or {}
+            settings["calendar_ids"] = calendar_ids
+            config.settings = settings
+            config.enabled = True  # Enable connector now that calendars are configured
+            
+            db.commit()
+            db.refresh(config)
+            
+        finally:
+            db.close()
+        
+        # Recreate connector instance with new settings
+        await connector_manager.remove_connector(connector_name)
+        
+        # Get fresh config from database for connector creation
+        db = next(get_db())
+        try:
+            fresh_config = db.query(ConnectorConfig).filter(ConnectorConfig.name == connector_name).first()
+            if fresh_config:
+                await connector_manager.create_connector(fresh_config)
+        finally:
+            db.close()
+        
+        return {
+            "success": True,
+            "message": f"Configured {len(calendar_ids)} calendars for {connector_name}",
+            "calendar_ids": calendar_ids
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to configure calendars for {connector_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def get_user_calendars(access_token: str) -> List[Dict[str, Any]]:
+    """Get user's calendar list from Google Calendar API"""
+    try:
+        import aiohttp
+        
+        headers = {"Authorization": f"Bearer {access_token}"}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+                headers=headers
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    calendars = []
+                    
+                    for calendar in data.get("items", []):
+                        calendars.append({
+                            "id": calendar.get("id"),
+                            "summary": calendar.get("summary"),
+                            "description": calendar.get("description", ""),
+                            "primary": calendar.get("primary", False),
+                            "access_role": calendar.get("accessRole"),
+                            "color_id": calendar.get("colorId")
+                        })
+                    
+                    return calendars
+                else:
+                    logger.error(f"Failed to get calendars: {response.status}")
+                    return []
+                    
+    except Exception as e:
+        logger.error(f"Error getting user calendars: {e}")
+        return []

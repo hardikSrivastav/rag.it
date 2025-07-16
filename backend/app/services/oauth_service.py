@@ -795,6 +795,228 @@ class GmailOAuthService:
         return None
 
 
+class GoogleCalendarOAuthService:
+    """Google Calendar OAuth service for connector authentication"""
+    
+    def __init__(self):
+        self.pending_states: Dict[str, Dict] = {}
+        self._load_config()
+        
+    def _load_config(self):
+        """Load OAuth configuration from YAML file"""
+        config = oauth_config_manager.get_oauth_config("calendar")
+        if config:
+            logger.info("Google Calendar OAuth configuration loaded from file")
+        
+    def configure(self, client_id: str, client_secret: str, redirect_uri: str):
+        """Configure OAuth credentials and save to file"""
+        oauth_config_manager.save_oauth_config("calendar", client_id, client_secret, redirect_uri)
+        logger.info("Google Calendar OAuth configured and saved", client_id=client_id[:8] + "...")
+    
+    def is_configured(self) -> bool:
+        """Check if OAuth is properly configured"""
+        return oauth_config_manager.is_oauth_configured("calendar")
+    
+    def get_config(self) -> Optional[Dict]:
+        """Get current OAuth configuration"""
+        return oauth_config_manager.get_oauth_config("calendar")
+    
+    def generate_auth_url(self, connector_name: str, scopes: list = None) -> Dict[str, str]:
+        """Generate Google Calendar OAuth authorization URL"""
+        if not self.is_configured():
+            raise ValueError("Google Calendar OAuth not configured")
+        
+        config = self.get_config()
+        if not config:
+            raise ValueError("Google Calendar OAuth configuration not found")
+        
+        if scopes is None:
+            scopes = [
+                "https://www.googleapis.com/auth/calendar.readonly",
+                "https://www.googleapis.com/auth/userinfo.email"
+            ]
+        
+        # Generate secure state parameter
+        state = secrets.token_urlsafe(32)
+        
+        # Store state with connector info
+        self.pending_states[state] = {
+            "connector_name": connector_name,
+            "created_at": datetime.utcnow(),
+            "scopes": scopes
+        }
+        
+        # Build authorization URL
+        params = {
+            "client_id": config["client_id"],
+            "redirect_uri": config["redirect_uri"],
+            "scope": " ".join(scopes),
+            "state": state,
+            "response_type": "code",
+            "access_type": "offline",  # Request refresh token
+            "prompt": "consent"  # Force consent to get refresh token
+        }
+        
+        auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+        
+        return {
+            "auth_url": auth_url,
+            "state": state,
+            "expires_in": 600  # 10 minutes
+        }
+    
+    async def exchange_code_for_token(self, code: str, state: str) -> Dict[str, Any]:
+        """Exchange authorization code for access token"""
+        if not self.is_configured():
+            raise ValueError("Google Calendar OAuth not configured")
+        
+        config = self.get_config()
+        if not config:
+            raise ValueError("Google Calendar OAuth configuration not found")
+        
+        # Validate state
+        if state not in self.pending_states:
+            raise ValueError("Invalid or expired state parameter")
+        
+        state_info = self.pending_states[state]
+        
+        # Check if state is expired (10 minutes)
+        if datetime.utcnow() - state_info["created_at"] > timedelta(minutes=10):
+            del self.pending_states[state]
+            raise ValueError("OAuth state expired")
+        
+        try:
+            # Exchange code for token
+            async with aiohttp.ClientSession() as session:
+                token_data = {
+                    "client_id": config["client_id"],
+                    "client_secret": config["client_secret"],
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": config["redirect_uri"]
+                }
+                
+                async with session.post(
+                    "https://oauth2.googleapis.com/token",
+                    data=token_data
+                ) as response:
+                    if response.status != 200:
+                        error_data = await response.text()
+                        logger.error(f"Token exchange failed: {response.status} - {error_data}")
+                        raise ValueError(f"Token exchange failed: {error_data}")
+                    
+                    token_response = await response.json()
+                    
+                    # Get user info
+                    user_info = await self._get_user_info(token_response["access_token"])
+                    
+                    # Store token
+                    oauth_config_manager.save_oauth_token(
+                        provider="calendar",
+                        user_identifier=user_info.get("email", "unknown"),
+                        access_token=token_response["access_token"],
+                        refresh_token=token_response.get("refresh_token"),
+                        token_type=token_response.get("token_type", "Bearer"),
+                        expires_in=token_response.get("expires_in"),
+                        scope=token_response.get("scope", " ".join(state_info["scopes"])),
+                        user_info=user_info
+                    )
+                    
+                    # Clean up state
+                    del self.pending_states[state]
+                    
+                    return {
+                        "connector_name": state_info["connector_name"],
+                        "access_token": token_response["access_token"],
+                        "refresh_token": token_response.get("refresh_token"),
+                        "token_type": token_response.get("token_type", "Bearer"),
+                        "expires_in": token_response.get("expires_in"),
+                        "scope": token_response.get("scope", " ".join(state_info["scopes"])),
+                        "user_info": user_info
+                    }
+                    
+        except Exception as e:
+            # Clean up state on error
+            if state in self.pending_states:
+                del self.pending_states[state]
+            logger.error(f"Calendar OAuth token exchange failed: {e}")
+            raise ValueError(f"Token exchange failed: {str(e)}")
+    
+    async def _get_user_info(self, access_token: str) -> Dict[str, Any]:
+        """Get user information from Google"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {"Authorization": f"Bearer {access_token}"}
+                
+                async with session.get(
+                    "https://www.googleapis.com/oauth2/v2/userinfo",
+                    headers=headers
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        logger.warning(f"Failed to get user info: {response.status}")
+                        return {}
+        except Exception as e:
+            logger.error(f"Error getting user info: {e}")
+            return {}
+    
+    def get_stored_token(self, user_identifier: str = None) -> Optional[str]:
+        """Get stored access token for Google Calendar"""
+        if user_identifier:
+            token_data = oauth_config_manager.get_oauth_token("calendar", user_identifier)
+        else:
+            token_data = oauth_config_manager.get_latest_token("calendar")
+        
+        if token_data:
+            return token_data.get("access_token")
+        
+        return None
+    
+    def get_stored_refresh_token(self, user_identifier: str = None) -> Optional[str]:
+        """Get stored refresh token for Google Calendar"""
+        if user_identifier:
+            token_data = oauth_config_manager.get_oauth_token("calendar", user_identifier)
+        else:
+            token_data = oauth_config_manager.get_latest_token("calendar")
+        
+        if token_data:
+            return token_data.get("refresh_token")
+        
+        return None
+    
+    def store_token(self, user_identifier: str, token_data: Dict[str, Any]) -> bool:
+        """Store or update token for user"""
+        try:
+            oauth_config_manager.save_oauth_token(
+                provider="calendar",
+                user_identifier=user_identifier,
+                access_token=token_data.get("access_token"),
+                refresh_token=token_data.get("refresh_token"),
+                token_type=token_data.get("token_type", "Bearer"),
+                expires_in=token_data.get("expires_in"),
+                scope=token_data.get("scope", ""),
+                user_info=token_data.get("user_info")
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error storing calendar token: {e}")
+            return False
+    
+    def get_stored_user_info(self, user_identifier: str = None) -> Optional[Dict]:
+        """Get stored user info for Google Calendar"""
+        if user_identifier:
+            token_data = oauth_config_manager.get_oauth_token("calendar", user_identifier)
+        else:
+            token_data = oauth_config_manager.get_latest_token("calendar")
+        
+        if token_data:
+            return token_data.get("user_info", {})
+        
+        return None
+
+
 # Global OAuth service instances
 github_oauth_service = GitHubOAuthService()
 gmail_oauth_service = GmailOAuthService()
+calendar_oauth_service = GoogleCalendarOAuthService()
