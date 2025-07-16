@@ -20,6 +20,8 @@ class CalendarConnector(BaseConnector):
         self.api_base = "https://www.googleapis.com/calendar/v3"
         self.session: Optional[aiohttp.ClientSession] = None
         self.access_token: Optional[str] = None
+        self._sync_task: Optional[asyncio.Task] = None
+        self._stop_sync = False
         
     @property
     def connector_type(self) -> str:
@@ -422,8 +424,113 @@ class CalendarConnector(BaseConnector):
             logger.error(f"Error updating connector credentials: {e}")
             return False
     
+    async def start_background_sync(self):
+        """Start background sync task"""
+        if self._sync_task and not self._sync_task.done():
+            logger.info("Background sync already running for Google Calendar")
+            return
+        
+        self._stop_sync = False
+        self._sync_task = asyncio.create_task(self._background_sync_loop())
+        logger.info("Started background sync for Google Calendar")
+    
+    async def stop_background_sync(self):
+        """Stop background sync task"""
+        self._stop_sync = True
+        if self._sync_task and not self._sync_task.done():
+            self._sync_task.cancel()
+            try:
+                await self._sync_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Stopped background sync for Google Calendar")
+    
+    async def _background_sync_loop(self):
+        """Background sync loop that runs periodically"""
+        sync_interval = self.config.settings.get("sync_interval_minutes", 30)
+        max_retries = 3
+        retry_delay = 60  # 1 minute
+        
+        logger.info(f"Starting Google Calendar background sync with {sync_interval} minute intervals")
+        
+        while not self._stop_sync:
+            try:
+                # Ensure we're authenticated
+                if not await self.authenticate():
+                    logger.error("Google Calendar authentication failed, retrying in 5 minutes")
+                    await asyncio.sleep(300)  # Wait 5 minutes before retry
+                    continue
+                
+                # Perform incremental sync
+                logger.info("Starting Google Calendar background sync...")
+                sync_result = await self.sync_data(incremental=True)
+                
+                if sync_result.success:
+                    logger.info(f"Google Calendar sync completed: {sync_result.items_added} items added, "
+                              f"{sync_result.items_processed} processed in {sync_result.duration_seconds:.1f}s")
+                    
+                    # Update last sync time
+                    await self._update_last_sync_time()
+                else:
+                    logger.error(f"Google Calendar sync failed with {len(sync_result.errors)} errors: {sync_result.errors}")
+                
+                # Wait for next sync interval
+                await asyncio.sleep(sync_interval * 60)
+                
+            except asyncio.CancelledError:
+                logger.info("Google Calendar background sync cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Google Calendar background sync error: {e}")
+                
+                # Retry logic with exponential backoff
+                for retry in range(max_retries):
+                    if self._stop_sync:
+                        break
+                    
+                    wait_time = retry_delay * (2 ** retry)  # Exponential backoff
+                    logger.info(f"Retrying Google Calendar sync in {wait_time} seconds (attempt {retry + 1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    
+                    try:
+                        if await self.authenticate():
+                            sync_result = await self.sync_data(incremental=True)
+                            if sync_result.success:
+                                logger.info("Google Calendar sync retry successful")
+                                await self._update_last_sync_time()
+                                break
+                    except Exception as retry_error:
+                        logger.error(f"Google Calendar sync retry {retry + 1} failed: {retry_error}")
+                else:
+                    # All retries failed, wait longer before next attempt
+                    logger.error("All Google Calendar sync retries failed, waiting 10 minutes before next attempt")
+                    await asyncio.sleep(600)
+    
+    async def _update_last_sync_time(self):
+        """Update the last sync time in the database"""
+        try:
+            from app.core.database import get_db, ConnectorConfig
+            
+            db = next(get_db())
+            try:
+                connector = db.query(ConnectorConfig).filter(ConnectorConfig.name == self.config.name).first()
+                if connector:
+                    connector.last_sync = datetime.utcnow()
+                    db.commit()
+                    
+                    # Update local config
+                    self.config.last_sync = connector.last_sync
+                    logger.debug(f"Updated last sync time for Google Calendar: {connector.last_sync}")
+                    
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error updating last sync time: {e}")
+    
     async def close(self):
         """Close the connector and cleanup resources"""
+        await self.stop_background_sync()
         if self.session:
             await self.session.close()
             self.session = None
