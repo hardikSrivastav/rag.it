@@ -24,7 +24,7 @@ export function ChatInterface() {
   });
 
   useEffect(() => {
-    if (history) {
+    if (history && Array.isArray(history)) {
       setMessages(history);
     }
   }, [history]);
@@ -71,7 +71,7 @@ export function ChatInterface() {
     <div className="flex flex-col h-[calc(100vh-100px)]">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {messages.length === 0 ? (
+        {!messages || messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-center">
             <div className="space-y-4">
               <div className="text-4xl">💬</div>
@@ -82,7 +82,7 @@ export function ChatInterface() {
             </div>
           </div>
         ) : (
-          messages.map((message) => (
+          Array.isArray(messages) && messages.map((message) => (
             <div key={message.id} className="space-y-2">
               {/* Message header */}
               <div className="flex items-center gap-2 text-sm">
