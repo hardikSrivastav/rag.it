@@ -159,3 +159,6 @@ Thumbs.db
 .env.development 
 .cursor
 *.yaml
+
+# Node.js
+node_modules/
