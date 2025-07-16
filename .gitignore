@@ -61,6 +61,8 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+client_secret_512143197748-hj38cl9fovbbfsom2mrh0iltmdl47e7q.apps.googleusercontent.com.json
+
 # Flask stuff:
 instance/
 .webassets-cache
